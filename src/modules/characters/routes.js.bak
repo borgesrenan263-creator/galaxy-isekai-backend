@@ -1,0 +1,146 @@
+import { v4 as uuid } from "uuid";
+import { persistDb } from "../../db/index.js";
+
+function nowISO() { return new Date().toISOString(); }
+
+function rowToCharacter(r) {
+  return {
+    id: r.id,
+    user_id: r.user_id,
+    name: r.name,
+    class: r.class,
+    level: r.level,
+    hp_current: r.hp_current,
+    hp_max: r.hp_max,
+    atk: r.atk,
+    def: r.def,
+    crit: r.crit,
+    spd: r.spd,
+    xp: r.xp ?? 0,
+    xp_to_next: r.xp_to_next ?? 100,
+    wins: r.wins ?? 0,
+    losses: r.losses ?? 0,
+    last_battle_at: r.last_battle_at ?? 0,
+    created_at: r.created_at,
+    updated_at: r.updated_at
+  };
+}
+
+function getCharacterById(db, id) {
+  const stmt = db.prepare(`SELECT * FROM characters WHERE id = ? LIMIT 1;`);
+  stmt.bind([id]);
+  const ok = stmt.step();
+  const row = ok ? stmt.getAsObject() : null;
+  stmt.free();
+  return row ? rowToCharacter(row) : null;
+}
+
+function getCharacterByName(db, name) {
+  const stmt = db.prepare(`SELECT * FROM characters WHERE name = ? LIMIT 1;`);
+  stmt.bind([name]);
+  const ok = stmt.step();
+  const row = ok ? stmt.getAsObject() : null;
+  stmt.free();
+  return row ? rowToCharacter(row) : null;
+}
+
+function resolveCharacter(db, value) {
+  return getCharacterById(db, value) || getCharacterByName(db, value);
+}
+
+function listCharacters(db) {
+  const res = db.exec(`SELECT * FROM characters ORDER BY level DESC, xp DESC;`);
+  const cols = res?.[0]?.columns || [];
+  const vals = res?.[0]?.values || [];
+  const rows = vals.map(v => Object.fromEntries(cols.map((c,i)=>[c,v[i]])));
+  return rows.map(rowToCharacter);
+}
+
+export function characterRoutes(app, _opts, done) {
+  app.get("/characters", async () => {
+    const db = app.db;
+    const characters = listCharacters(db);
+    return { ok: true, total: characters.length, characters };
+  });
+
+  app.get("/characters/:id", async (req) => {
+    const db = app.db;
+    const c = resolveCharacter(db, req.params.id);
+    return { ok: true, character: c };
+  });
+
+  // HEAL
+  app.post("/characters/:id/heal", async (req) => {
+    const db = app.db;
+    const id = req.params.id;
+
+    const current = resolveCharacter(db, id);
+    if (!current) return { ok: false, error: "character not found" };
+
+    const amount = Number(req.body?.amount ?? 0);
+    const full = Boolean(req.body?.full ?? false);
+
+    let newHp = current.hp_current;
+    if (full) newHp = current.hp_max;
+    else newHp = Math.min(current.hp_max, current.hp_current + Math.max(0, amount));
+
+    const stmt = db.prepare(`
+      UPDATE characters
+      SET hp_current = ?, updated_at = ?
+      WHERE id = ?;
+    `);
+    stmt.run([newHp, nowISO(), current.id]);
+    stmt.free();
+    persistDb(db);
+
+    return { ok: true, character: getCharacterById(db, current.id) };
+  });
+
+  // REVIVE
+  app.post("/characters/:id/revive", async (req) => {
+    const db = app.db;
+    const id = req.params.id;
+
+    const current = resolveCharacter(db, id);
+    if (!current) return { ok: false, error: "character not found" };
+
+    const hp = Number(req.body?.hp ?? 1);
+    const revivedHp = (hp <= 0) ? 1 : hp;
+
+    const newHp = (current.hp_current > 0) ? current.hp_current : Math.min(current.hp_max, revivedHp);
+
+    const stmt = db.prepare(`
+      UPDATE characters
+      SET hp_current = ?, updated_at = ?
+      WHERE id = ?;
+    `);
+    stmt.run([newHp, nowISO(), current.id]);
+    stmt.free();
+    persistDb(db);
+
+    return { ok: true, character: getCharacterById(db, current.id) };
+  });
+
+  // (opcional) criar item no inventário rápido
+  app.post("/characters/:id/items/add", async (req) => {
+    const db = app.db;
+    const c = resolveCharacter(db, req.params.id);
+    if (!c) return { ok: false, error: "character not found" };
+
+    const item_id = String(req.body?.item_id || "");
+    if (!item_id) return { ok: false, error: "missing item_id" };
+
+    const relId = uuid();
+    const stmt = db.prepare(`
+      INSERT INTO character_items (id, character_id, item_id, equipped, created_at)
+      VALUES (?, ?, ?, 0, ?);
+    `);
+    stmt.run([relId, c.id, item_id, nowISO()]);
+    stmt.free();
+    persistDb(db);
+
+    return { ok: true, id: relId };
+  });
+
+  done();
+}

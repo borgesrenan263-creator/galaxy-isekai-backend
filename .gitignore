@@ -1,6 +1,43 @@
-node_modules/
-_bak/
-data/*.sqlite
-data/*.db
+# dependencies
+node_modules
+
+# build
+dist
+
+# logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env
 .env
+.env.*
+
+# database local
+dev.db
+*.db
+*.sqlite
+*.sqlite3
+
+# backups
+backup-*.tar.gz
+*.tgz
+*.zip
+
+# system
+.DS_Store
+
+# temp fixes / debug
+_fix_*
+_hotfix_*
+_ensure_*
+*.bak
+bak/
+# backups
+*.bak
+*.bak-*
+*_fix*
+hotfix*
+_rewrite_*
+_rewrite_*
